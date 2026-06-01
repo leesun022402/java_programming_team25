@@ -1,0 +1,3 @@
+build/
+*.class
+.sources.txt

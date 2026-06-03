@@ -154,10 +154,7 @@ public class GameManager {
             }
             int take = Math.min(REVIVE_CARDS_PER_PLAYER, other.totalCards());
             for (int i = 0; i < take; i++) {
-                Card card = other.removeFromDrawPile();
-                if (card == null) {
-                    card = other.takeFaceUp().pollFirst();
-                }
+                Card card = removeOneTransferCard(other);
                 if (card != null) {
                     player.addToBottom(card);
                 }
@@ -269,13 +266,14 @@ public class GameManager {
                 String.format("%s rings! Fruit 5 -> won %d cards", ringer.name(), cards));
     }
 
-    /** 3 chip symbols: 1 chip from the house (cards stay on the table). */
+    /** 3 chip symbols: 1 chip from the house, then reset the table cards. */
     private BellResult resolveChip(Player ringer, RingOutcome outcome) {
         boolean got = grantChip(ringer);
+        int cleared = clearAllFaceUp();
         afterBellMaintenance();
         return new BellResult(ringer, outcome, 0, got,
-                String.format("%s rings! 3 chips -> %s", ringer.name(),
-                        got ? "won 1 chip" : "house chips depleted (none won)"));
+                String.format("%s rings! 3 chips -> %s, cleared %d card(s)", ringer.name(),
+                        got ? "won 1 chip" : "house chips depleted (none won)", cleared));
     }
 
     /** Both met: cards + chip. */
@@ -295,10 +293,7 @@ public class GameManager {
             if (other == ringer || other.isEliminated()) {
                 continue;
             }
-            Card penalty = ringer.removeFromDrawPile();
-            if (penalty == null) {
-                penalty = ringer.takeFaceUp().pollFirst();
-            }
+            Card penalty = removeOneTransferCard(ringer);
             if (penalty != null) {
                 other.addToBottom(penalty);
                 paid++;
@@ -320,6 +315,24 @@ public class GameManager {
         return total;
     }
 
+    /** Clears every player's face-up pile without awarding those cards. */
+    private int clearAllFaceUp() {
+        int total = 0;
+        for (Player p : players) {
+            total += p.takeFaceUp().size();
+        }
+        return total;
+    }
+
+    /** Takes one transferable card: draw pile first, then one face-up card. */
+    private Card removeOneTransferCard(Player player) {
+        Card card = player.removeFromDrawPile();
+        if (card == null) {
+            card = player.removeFromFaceUpPile();
+        }
+        return card;
+    }
+
     /** Grants 1 chip to the winner if the house pool still has any. */
     private boolean grantChip(Player ringer) {
         if (houseChips > 0) {
@@ -338,6 +351,9 @@ public class GameManager {
             }
         }
         checkGameOver();
+        if (!gameOver && currentPlayer().isEliminated()) {
+            advanceTurn();
+        }
     }
 
     /** Table summary for debugging/display. */

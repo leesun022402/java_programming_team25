@@ -56,6 +56,11 @@ public class Player {
         return faceDown.pollFirst();
     }
 
+    /** Removes one card from the top of the face-up pile. Null if empty. */
+    public Card removeFromFaceUpPile() {
+        return faceUp.pollFirst();
+    }
+
     /** Adds one card to the bottom of the draw pile. */
     public void addToBottom(Card card) {
         if (card != null) {

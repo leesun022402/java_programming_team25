@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class BotClient {
 
-    private final String name;
+    private String name;
     private final Random rng;
     private PrintWriter out;
 
@@ -65,6 +65,13 @@ public class BotClient {
     }
 
     private void onMessage(String line) {
+        if (line.startsWith(Protocol.MSG_WELCOME)) {
+            String assignedName = stripType(line).trim();
+            if (!assignedName.isEmpty()) {
+                name = assignedName;
+            }
+            return;
+        }
         if (line.startsWith(Protocol.MSG_GAMEOVER)) {
             System.out.println("[" + name + "] " + line);
             System.exit(0);
@@ -104,6 +111,11 @@ public class BotClient {
         } else {
             flipScheduled.set(false);
         }
+    }
+
+    private static String stripType(String line) {
+        int sp = line.indexOf(' ');
+        return sp < 0 ? "" : line.substring(sp + 1);
     }
 
     private void scheduleBell() {

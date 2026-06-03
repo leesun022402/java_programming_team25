@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets;
  */
 public class SwingClient extends JFrame {
 
-    private final String myName;
+    private volatile String myName;
     private PrintWriter out;
 
     private volatile StateView state;
@@ -113,6 +113,13 @@ public class SwingClient extends JFrame {
             String winner = line.substring(Protocol.MSG_GAMEOVER.length()).trim();
             gameActive = false;
             SwingUtilities.invokeLater(() -> onGameOver(winner));
+        } else if (line.startsWith(Protocol.MSG_WELCOME)) {
+            String assignedName = stripType(line).trim();
+            if (!assignedName.isEmpty()) {
+                myName = assignedName;
+                SwingUtilities.invokeLater(() -> setTitle("Halli Galli Plus+ - " + assignedName));
+            }
+            SwingUtilities.invokeLater(() -> appendLog("Welcome " + myName));
         } else {
             String body = stripType(line);
             SwingUtilities.invokeLater(() -> appendLog(body));

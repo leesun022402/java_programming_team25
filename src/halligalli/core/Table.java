@@ -64,9 +64,9 @@ public class Table {
         return false;
     }
 
-    /** Whether 3 visible chip symbols are showing. */
+    /** Whether at least 3 visible chip symbols are showing. */
     public boolean isChipBell() {
-        return chipSymbolCount() == CHIP_BELL_THRESHOLD;
+        return chipSymbolCount() >= CHIP_BELL_THRESHOLD;
     }
 
     /** Whether the bell may be rung (fruit or chip condition met). */

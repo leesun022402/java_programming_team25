@@ -10,6 +10,7 @@ import halligalli.model.Player;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,18 +59,34 @@ public class GameServer {
     /** Starts the server and blocks until the game ends. */
     public void start() throws IOException, InterruptedException {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
+            serverSocket.setSoTimeout(500);
             System.out.println("[server] waiting for " + expectedPlayers + " players on port " + port + "...");
-            int connected = 0;
-            while (connected < expectedPlayers) {
-                Socket socket = serverSocket.accept();
-                ClientHandler handler = new ClientHandler(this, socket);
-                handlers.add(handler);
-                handler.start();
-                connected++;
-                System.out.println("[server] connected " + connected + "/" + expectedPlayers);
+            while (!hasStarted()) {
+                try {
+                    Socket socket = serverSocket.accept();
+                    ClientHandler handler = new ClientHandler(this, socket);
+                    handlers.add(handler);
+                    handler.start();
+                    System.out.println("[server] connected " + handlers.size() + " socket(s), "
+                            + joinedCount() + "/" + expectedPlayers + " joined");
+                } catch (SocketTimeoutException ignored) {
+                    // Re-check whether a handler thread started the game after receiving JOINs.
+                }
             }
             gameOverLatch.await(); // wait until the game is over
             System.out.println("[server] game over. shutting down.");
+        }
+    }
+
+    private boolean hasStarted() {
+        synchronized (lock) {
+            return started;
+        }
+    }
+
+    private int joinedCount() {
+        synchronized (lock) {
+            return joinOrder.size();
         }
     }
 
@@ -109,9 +126,16 @@ public class GameServer {
             handler.send(Protocol.MSG_ERROR + " Already joined.");
             return;
         }
+        if (started || finished) {
+            handler.send(Protocol.MSG_ERROR + " The game has already started.");
+            handler.close();
+            return;
+        }
+        name = sanitizeName(name);
         if (name.isBlank()) {
             name = "P" + (joinOrder.size() + 1);
         }
+        name = uniqueName(name);
         Player player = new Player(name);
         playerOf.put(handler, player);
         joinOrder.add(player);
@@ -121,6 +145,32 @@ public class GameServer {
         if (joinOrder.size() == expectedPlayers && !started) {
             startGame();
         }
+    }
+
+    private String sanitizeName(String name) {
+        if (name == null) {
+            return "";
+        }
+        return name.replace('|', ' ').replace(',', ' ').trim().replaceAll("\\s+", " ");
+    }
+
+    private String uniqueName(String base) {
+        String candidate = base;
+        int suffix = 2;
+        while (isNameTaken(candidate)) {
+            candidate = base + "-" + suffix;
+            suffix++;
+        }
+        return candidate;
+    }
+
+    private boolean isNameTaken(String name) {
+        for (Player p : joinOrder) {
+            if (p.name().equals(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void startGame() {
@@ -212,9 +262,15 @@ public class GameServer {
 
     void onDisconnect(ClientHandler handler) {
         synchronized (lock) {
-            Player p = playerOf.get(handler);
+            Player p = playerOf.remove(handler);
             handlers.remove(handler);
-            if (p == null || !started || finished) {
+            if (p == null || finished) {
+                return;
+            }
+            if (!started) {
+                joinOrder.remove(p);
+                broadcast(Protocol.MSG_INFO + " " + p.name() + " left before start ("
+                        + joinOrder.size() + "/" + expectedPlayers + ")");
                 return;
             }
             if (p.isActive()) {

@@ -62,8 +62,8 @@ The engine is separate from the input source (console/bot/socket), so the socket
 
 ## Rules summary
 - 56 cards, 16 of which carry a chip symbol. The house starts with one physical chip (life) per player.
-- From the visible cards (each player's top face-up card): **a fruit total of 5** or **3 chip symbols** → bell.
-  - Fruit 5 → win all face-up cards / 3 chips → win 1 chip (cards stay) / both → win both.
+- From the visible cards (each player's top face-up card): **a fruit total of 5** or **3+ chip symbols** → bell.
+  - Fruit 5 → win all face-up cards / 3 chips → win 1 chip and clear the face-up cards / both → win both.
 - 0 cards → spend 1 chip and receive 3 cards from each other player to revive. No chip → eliminated.
 - A false bell pays 1 card to each other player. Last player standing wins.
 - The player who rings a valid bell leads the next turn (flips first).

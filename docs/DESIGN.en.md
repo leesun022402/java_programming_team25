@@ -12,10 +12,10 @@ Based on standard Halli Galli (56 cards, 16 of which carry a chip symbol).
 1. **Cards**: 56 total, 16 carry a chip symbol. The **house** starts with one **physical chip
    (life token)** per player.
 2. **Ringing the bell**
-   - You may ring when the visible cards show **a fruit total of 5** OR **3 chip symbols**.
+   - You may ring when the visible cards show **a fruit total of 5** OR **3+ chip symbols**.
    - Whoever rings first takes the reward.
    - Fruit total 5: take all face-up cards on the table.
-   - 3 chip symbols: take **1 chip** (the face-up cards stay on the table).
+   - 3 chip symbols: take **1 chip** and reset the face-up cards (they are not awarded as a card reward).
    - Both met: take **both** the cards and the chip.
 3. **Chips = lives.** Running out of cards is not an instant loss: spend 1 chip and receive
    **3 cards from each other player** (or fewer if they hold fewer) to revive. With no chip, you are eliminated.
@@ -95,7 +95,7 @@ The engine only provides the **validation API**; who rings first is decided by t
 | Condition | Outcome | Handling |
 |---|---|---|
 | fruit 5 | FRUIT | move all face-up cards to the winner's draw pile bottom; clear face-up piles |
-| 3 chip symbols | CHIP | grant 1 chip from the house pool (0 if depleted); face-up cards stay |
+| 3+ chip symbols | CHIP | grant 1 chip from the house pool (0 if depleted); reset the face-up cards |
 | both | BOTH | cards + chip |
 | neither | INVALID | false bell: ringer pays 1 card to each other active player |
 

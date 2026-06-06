@@ -2,6 +2,8 @@ package halligalli.net;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -39,7 +41,19 @@ public class SwingClient extends JFrame {
     }
 
     private void buildUi() {
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        // DISPOSE_ON_CLOSE prevents closing this window from killing the whole launcher/server JVM.
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                gameActive = false;
+                flipButton.setEnabled(false);
+                bellButton.setEnabled(false);
+                send(Protocol.CMD_QUIT);
+            }
+        });
+
         setResizable(true);
         setLayout(new BorderLayout(8, 8));
 
@@ -56,17 +70,20 @@ public class SwingClient extends JFrame {
         add(playersScroll, BorderLayout.CENTER);
         add(tablePanel, BorderLayout.EAST);
 
-        // bottom: buttons + log
         JPanel south = new JPanel(new BorderLayout(6, 6));
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 8));
+
         flipButton.setFont(flipButton.getFont().deriveFont(Font.BOLD, 15f));
         bellButton.setFont(bellButton.getFont().deriveFont(Font.BOLD, 18f));
         bellButton.setBackground(new Color(0xE7, 0x4C, 0x3C));
         bellButton.setForeground(Color.WHITE);
+
         flipButton.addActionListener(e -> send(Protocol.CMD_FLIP));
         bellButton.addActionListener(e -> send(Protocol.CMD_BELL));
+
         flipButton.setEnabled(false);
         bellButton.setEnabled(false);
+
         buttons.add(flipButton);
         buttons.add(bellButton);
         south.add(buttons, BorderLayout.NORTH);
@@ -100,10 +117,19 @@ public class SwingClient extends JFrame {
                 }
             } catch (Exception ignored) {
             }
+
             if (!gameEnded) {
-                SwingUtilities.invokeLater(() -> statusLabel.setText("Disconnected"));
+                SwingUtilities.invokeLater(() -> {
+                    gameActive = false;
+                    statusLabel.setText("Disconnected");
+                    statusLabel.setForeground(Color.GRAY);
+                    flipButton.setEnabled(false);
+                    bellButton.setEnabled(false);
+                    appendLog("*** Disconnected from server ***");
+                });
             }
         });
+
         reader.setDaemon(true);
         reader.start();
     }
@@ -146,11 +172,20 @@ public class SwingClient extends JFrame {
 
     private void applyState(StateView v) {
         this.state = v;
-        boolean myTurn = myName.equals(v.turn);
 
-        statusLabel.setText(String.format("Turn: %s%s    House chips: %d    Chip symbols: %d/%d",
-                v.turn, v.bellable ? "    *** BELL AVAILABLE ***" : "",
-                v.house, v.chipSymbols, v.chipTarget));
+        boolean myTurn = myName.equals(v.turn);
+        boolean myActive = isMyPlayerActive(v);
+
+        String outText = myActive ? "" : "    YOU ARE OUT";
+
+        statusLabel.setText(String.format("Turn: %s%s%s    House chips: %d    Chip symbols: %d/%d",
+                v.turn,
+                v.bellable ? "    *** BELL AVAILABLE ***" : "",
+                outText,
+                v.house,
+                v.chipSymbols,
+                v.chipTarget));
+
         statusLabel.setForeground(v.bellable ? new Color(0xC0, 0x39, 0x2B) : Color.DARK_GRAY);
 
         playersPanel.removeAll();
@@ -162,8 +197,25 @@ public class SwingClient extends JFrame {
 
         tablePanel.setState(v);
 
-        flipButton.setEnabled(gameActive && myTurn);
-        bellButton.setEnabled(gameActive);
+        // Only active players can press buttons.
+        // FLIP is still limited to my turn.
+        // BELL stays available anytime, but not after elimination.
+        flipButton.setEnabled(gameActive && myTurn && myActive);
+        bellButton.setEnabled(gameActive && myActive);
+    }
+
+    private boolean isMyPlayerActive(StateView v) {
+        if (v == null) {
+            return false;
+        }
+
+        for (StateView.PlayerInfo p : v.players) {
+            if (p.name.equals(myName)) {
+                return p.active;
+            }
+        }
+
+        return false;
     }
 
     private void onGameOver(String winner) {
@@ -187,6 +239,7 @@ public class SwingClient extends JFrame {
         if (enumName == null) {
             return Color.LIGHT_GRAY;
         }
+
         switch (enumName) {
             case "BANANA": return new Color(0xF1, 0xC4, 0x0F);
             case "STRAWBERRY": return new Color(0xE7, 0x4C, 0x3C);
@@ -207,6 +260,7 @@ public class SwingClient extends JFrame {
             Dimension base = super.getPreferredSize();
             Container parent = getParent();
             int width = parent != null ? parent.getWidth() : 0;
+
             if (width <= 0 || getComponentCount() == 0) {
                 return base;
             }
@@ -222,8 +276,10 @@ public class SwingClient extends JFrame {
                 if (!component.isVisible()) {
                     continue;
                 }
+
                 Dimension d = component.getPreferredSize();
                 int nextWidth = rowWidth == 0 ? d.width : rowWidth + layout.getHgap() + d.width;
+
                 if (nextWidth <= maxWidth) {
                     rowWidth = nextWidth;
                     rowHeight = Math.max(rowHeight, d.height);
@@ -233,6 +289,7 @@ public class SwingClient extends JFrame {
                     rowHeight = d.height;
                 }
             }
+
             totalHeight += rowHeight;
             return new Dimension(width, Math.max(base.height, totalHeight));
         }
@@ -280,31 +337,37 @@ public class SwingClient extends JFrame {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
             int w = getWidth();
             int h = getHeight();
 
-            // card body
             RoundRectangle2D body = new RoundRectangle2D.Float(4, 4, w - 8, h - 8, 18, 18);
+
             g2.setColor(Color.WHITE);
             g2.fill(body);
+
             g2.setStroke(new BasicStroke(isTurn ? 4f : 2f));
             g2.setColor(isTurn ? new Color(0xE6, 0x7E, 0x22) : new Color(0xBD, 0xC3, 0xC7));
             g2.draw(body);
 
-            // visible card area
             int cardTop = 12;
             int cardH = h - 70;
+
             if (p.hasVisible()) {
                 g2.setColor(fruitColor(p.visFruit));
                 g2.fillRoundRect(16, cardTop, w - 32, cardH, 14, 14);
+
                 g2.setColor(Color.WHITE);
                 g2.setFont(getFont().deriveFont(Font.BOLD, 40f));
                 drawCentered(g2, "x" + p.visCount, w, cardTop + cardH / 2);
+
                 g2.setFont(getFont().deriveFont(Font.BOLD, 14f));
                 drawCenteredAt(g2, StateView.prettyFruit(p.visFruit), w / 2, cardTop + cardH - 14);
+
                 if (p.visChip) {
                     g2.setColor(new Color(0x2C, 0x3E, 0x50));
                     g2.fillOval(w - 46, cardTop + 8, 26, 26);
+
                     g2.setColor(Color.WHITE);
                     g2.setFont(getFont().deriveFont(Font.BOLD, 13f));
                     drawCenteredAt(g2, "C", w - 33, cardTop + 26);
@@ -312,27 +375,29 @@ public class SwingClient extends JFrame {
             } else {
                 g2.setColor(new Color(0xEC, 0xF0, 0xF1));
                 g2.fillRoundRect(16, cardTop, w - 32, cardH, 14, 14);
+
                 g2.setColor(Color.GRAY);
                 g2.setFont(getFont().deriveFont(Font.PLAIN, 13f));
                 drawCenteredAt(g2, "no card", w / 2, cardTop + cardH / 2);
             }
 
-            // name + counts
             g2.setColor(isSelf ? new Color(0x21, 0x60, 0xC0) : Color.DARK_GRAY);
             g2.setFont(getFont().deriveFont(Font.BOLD, 15f));
             drawCenteredAt(g2, p.name + (isSelf ? " (you)" : ""), w / 2, h - 40);
+
             g2.setColor(Color.DARK_GRAY);
             g2.setFont(getFont().deriveFont(Font.PLAIN, 13f));
             drawCenteredAt(g2, "cards " + p.cards + "   chips " + p.chips, w / 2, h - 20);
 
-            // eliminated overlay
             if (!p.active) {
                 g2.setColor(new Color(120, 120, 120, 150));
                 g2.fill(body);
+
                 g2.setColor(Color.WHITE);
                 g2.setFont(getFont().deriveFont(Font.BOLD, 30f));
                 drawCentered(g2, "OUT", w, h / 2);
             }
+
             g2.dispose();
         }
 
@@ -365,7 +430,9 @@ public class SwingClient extends JFrame {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
             int w = getWidth();
+
             g2.setColor(new Color(0xFA, 0xFA, 0xFA));
             g2.fillRect(0, 0, w, getHeight());
 
@@ -374,21 +441,30 @@ public class SwingClient extends JFrame {
             g2.drawString("TABLE", 16, 28);
 
             int y = 60;
+
             if (state != null) {
                 g2.setFont(getFont().deriveFont(Font.BOLD, 14f));
+
                 for (Map_Entry e : entries(state)) {
                     g2.setColor(fruitColor(e.key));
                     g2.fillRoundRect(16, y - 12, 16, 16, 4, 4);
+
                     g2.setColor(Color.DARK_GRAY);
                     g2.drawString(StateView.prettyFruit(e.key) + ": " + e.val
                             + (e.val == state.fruitTarget ? "  (" + state.fruitTarget + "!)" : ""), 40, y);
+
                     y += 26;
                 }
+
                 y += 10;
+
                 g2.setColor(Color.DARK_GRAY);
                 g2.drawString("Chip symbols: " + state.chipSymbols + "/" + state.chipTarget, 16, y);
+
                 y += 26;
+
                 g2.drawString("House chips: " + state.house, 16, y);
+
                 y += 40;
 
                 if (state.bellable) {
@@ -397,14 +473,18 @@ public class SwingClient extends JFrame {
                     g2.drawString("BELL!", 16, y);
                 }
             }
+
             g2.dispose();
         }
 
-        // tiny helpers to iterate the fruit map in a typed way
         private static final class Map_Entry {
             final String key;
             final int val;
-            Map_Entry(String k, int v) { key = k; val = v; }
+
+            Map_Entry(String k, int v) {
+                key = k;
+                val = v;
+            }
         }
 
         private java.util.List<Map_Entry> entries(StateView s) {

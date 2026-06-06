@@ -12,6 +12,8 @@ public final class StateView {
     public final boolean bellable;
     public final int house;
     public final int chipSymbols;
+    public final int fruitTarget;
+    public final int chipTarget;
     public final Map<String, Integer> fruits = new LinkedHashMap<>();
     public final List<PlayerInfo> players = new ArrayList<>();
 
@@ -41,11 +43,14 @@ public final class StateView {
         }
     }
 
-    private StateView(String turn, boolean bellable, int house, int chipSymbols) {
+    private StateView(String turn, boolean bellable, int house, int chipSymbols,
+                      int fruitTarget, int chipTarget) {
         this.turn = turn;
         this.bellable = bellable;
         this.house = house;
         this.chipSymbols = chipSymbols;
+        this.fruitTarget = fruitTarget;
+        this.chipTarget = chipTarget;
     }
 
     /** Parses one {@code STATE|...} line. */
@@ -55,6 +60,8 @@ public final class StateView {
         boolean bellable = false;
         int house = 0;
         int chipSym = 0;
+        int fruitTarget = 5;
+        int chipTarget = 3;
         String fruitsRaw = "";
         List<String> playerTokens = new ArrayList<>();
 
@@ -71,13 +78,16 @@ public final class StateView {
                 case "bellable": bellable = Boolean.parseBoolean(val); break;
                 case "house": house = parseInt(val); break;
                 case "chipsym": chipSym = parseInt(val); break;
+                case "fruittarget": fruitTarget = parseInt(val); break;
+                case "chiptarget": chipTarget = parseInt(val); break;
                 case "fruits": fruitsRaw = val; break;
                 case "p": playerTokens.add(val); break;
                 default: break;
             }
         }
 
-        StateView view = new StateView(turn, bellable, house, chipSym);
+        StateView view = new StateView(turn, bellable, house, chipSym,
+                fruitTarget > 0 ? fruitTarget : 5, chipTarget > 0 ? chipTarget : 3);
         if (!fruitsRaw.isBlank()) {
             for (String pair : fruitsRaw.split(",")) {
                 String[] kv = pair.split(":");
@@ -135,7 +145,8 @@ public final class StateView {
             fruits.forEach((f, c) -> sb.append(prettyFruit(f)).append("=").append(c).append(" "));
         }
         sb.append("\n");
-        sb.append("  | Chips: ").append(chipSymbols).append("/3   House: ").append(house).append("\n");
+        sb.append("  | Chips: ").append(chipSymbols).append("/").append(chipTarget)
+                .append("   House: ").append(house).append("\n");
         for (PlayerInfo p : players) {
             sb.append("  | ").append(p.name.equals(turn) ? "> " : "  ")
                     .append(p.name).append(": cards ").append(p.cards)

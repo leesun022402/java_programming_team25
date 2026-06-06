@@ -24,6 +24,7 @@ public class BotClient {
     private final int flipJitter;
     private final int bellBase;
     private final int bellJitter;
+    private final boolean exitOnGameOver;
 
     private volatile boolean bellable = false;
     private volatile boolean myTurn = false;
@@ -32,8 +33,13 @@ public class BotClient {
     private final AtomicBoolean bellScheduled = new AtomicBoolean(false);
 
     public BotClient(String name, long seed, String level) {
+        this(name, seed, level, true);
+    }
+
+    public BotClient(String name, long seed, String level, boolean exitOnGameOver) {
         this.name = name;
         this.rng = new Random(seed);
+        this.exitOnGameOver = exitOnGameOver;
         // difficulty presets — how fast the bot flips and how quickly it reacts to a bell
         switch (level == null ? "normal" : level.toLowerCase()) {
             case "fast":   // bot-vs-bot demo: near-instant
@@ -74,7 +80,11 @@ public class BotClient {
         }
         if (line.startsWith(Protocol.MSG_GAMEOVER)) {
             System.out.println("[" + name + "] " + line);
-            System.exit(0);
+            active = false;
+            if (exitOnGameOver) {
+                System.exit(0);
+            }
+            return;
         }
         if (!line.startsWith(Protocol.MSG_STATE)) {
             return;
@@ -121,7 +131,7 @@ public class BotClient {
     private void scheduleBell() {
         int delay = bellBase + rng.nextInt(bellJitter); // reaction time
         spawn(delay, () -> {
-            if (active && bellable) {
+            if (active && bellable && out != null) {
                 out.println(Protocol.CMD_BELL);
             }
         });
@@ -130,7 +140,7 @@ public class BotClient {
     private void scheduleFlip() {
         int delay = flipBase + rng.nextInt(flipJitter); // leave room for the bell race to settle
         spawn(delay, () -> {
-            if (active && myTurn) {
+            if (active && myTurn && out != null) {
                 out.println(Protocol.CMD_FLIP);
             }
         });

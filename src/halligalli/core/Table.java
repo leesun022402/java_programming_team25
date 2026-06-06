@@ -1,5 +1,6 @@
 package halligalli.core;
 
+import halligalli.exception.InvalidGameSetupException;
 import halligalli.model.Card;
 import halligalli.model.Fruit;
 import halligalli.model.Player;
@@ -15,13 +16,27 @@ import java.util.Map;
  */
 public class Table {
 
-    public static final int FRUIT_BELL_THRESHOLD = 5;
-    public static final int CHIP_BELL_THRESHOLD = 3;
+    public static final int FRUIT_BELL_THRESHOLD = GameRules.DEFAULT_FRUIT_BELL_THRESHOLD;
+    public static final int CHIP_BELL_THRESHOLD = GameRules.DEFAULT_CHIP_BELL_THRESHOLD;
 
     private final List<Player> players;
+    private final GameRules rules;
 
     public Table(List<Player> players) {
-        this.players = players;
+        this(players, GameRules.defaults());
+    }
+
+    public Table(List<Player> players, GameRules rules) {
+        if (players == null) {
+            throw new InvalidGameSetupException("Table requires a player list.");
+        }
+        for (Player p : players) {
+            if (p == null) {
+                throw new InvalidGameSetupException("Table cannot contain a null player.");
+            }
+        }
+        this.players = List.copyOf(players);
+        this.rules = rules != null ? rules : GameRules.defaults();
     }
 
     /** Per-fruit totals over the currently visible cards. */
@@ -57,20 +72,38 @@ public class Table {
     /** Whether some fruit total is exactly 5. */
     public boolean isFruitBell() {
         for (int total : fruitTotals().values()) {
-            if (total == FRUIT_BELL_THRESHOLD) {
+            if (total == rules.fruitBellThreshold()) {
                 return true;
             }
         }
         return false;
     }
 
-    /** Whether at least 3 visible chip symbols are showing. */
+    /** Whether enough visible chip symbols are showing for the current active player count. */
     public boolean isChipBell() {
-        return chipSymbolCount() >= CHIP_BELL_THRESHOLD;
+        return chipSymbolCount() >= chipBellThreshold();
     }
 
     /** Whether the bell may be rung (fruit or chip condition met). */
     public boolean isBellable() {
         return isFruitBell() || isChipBell();
+    }
+
+    public int fruitBellThreshold() {
+        return rules.fruitBellThreshold();
+    }
+
+    public int chipBellThreshold() {
+        return Math.min(rules.chipBellThreshold(), activePlayerCount());
+    }
+
+    private int activePlayerCount() {
+        int count = 0;
+        for (Player p : players) {
+            if (p.isActive()) {
+                count++;
+            }
+        }
+        return Math.max(1, count);
     }
 }

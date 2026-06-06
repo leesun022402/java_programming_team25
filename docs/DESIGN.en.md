@@ -12,10 +12,11 @@ Based on standard Halli Galli (56 cards, 16 of which carry a chip symbol).
 1. **Cards**: 56 total, 16 carry a chip symbol. The **house** starts with one **physical chip
    (life token)** per player.
 2. **Ringing the bell**
-   - You may ring when the visible cards show **a fruit total of 5** OR **3+ chip symbols**.
+   - You may ring when the visible cards show **a fruit total of 5** OR the **chip-symbol target**.
+   - The chip-symbol target is normally 3, but drops to 2 when only 2 players are active.
    - Whoever rings first takes the reward.
    - Fruit total 5: take all face-up cards on the table.
-   - 3 chip symbols: take **1 chip** and reset the face-up cards (they are not awarded as a card reward).
+   - Chip target met: take **1 chip** and reset the face-up cards (they are not awarded as a card reward).
    - Both met: take **both** the cards and the chip.
 3. **Chips = lives.** Running out of cards is not an instant loss: spend 1 chip and receive
    **3 cards from each other player** (or fewer if they hold fewer) to revive. With no chip, you are eliminated.
@@ -42,13 +43,17 @@ java_programming/
 │  │   └─ Player.java       faceDown/faceUp piles, chips, eliminated
 │  ├─ core/       game-rule engine
 │  │   ├─ DeckFactory.java  builds 56 cards + marks 16 chips + shuffles
+│  │   ├─ GameRules.java    rule values configurable from JSON
 │  │   ├─ Table.java        aggregates visible cards (fruit totals, chip count)
 │  │   ├─ RingOutcome.java  enum: FRUIT, CHIP, BOTH, INVALID
 │  │   ├─ BellResult.java   ring result + reward details
 │  │   └─ GameManager.java  turn flow, chip pool, ringBell validation, life/elimination
 │  ├─ exception/  custom exceptions (for Week 13)
 │  │   ├─ HalliGalliException.java
+│  │   ├─ InvalidGameSetupException.java
+│  │   ├─ InvalidPlayerException.java
 │  │   ├─ InvalidBellException.java
+│  │   ├─ NoChipException.java
 │  │   └─ GameOverException.java
 │  ├─ runner/     local driver (separate from the engine)
 │  │   └─ SimulationRunner.java  bot-based demo (full-round playthrough)
@@ -58,7 +63,19 @@ java_programming/
 │      ├─ ClientHandler.java per-connection thread
 │      ├─ StateView.java    STATE parser + board renderer
 │      ├─ GameClient.java   human console client
+│      ├─ SwingClient.java  human Swing GUI client
+│      ├─ GameLauncher.java host/join/bot launcher
+│      ├─ GameSettings.java JSON settings loader
+│      ├─ GameLogRecorder.java JSON event/state logger
+│      ├─ GameReplay.java   terminal replay viewer
 │      └─ BotClient.java    auto-playing bot client
+├─ src/halligalli/stats/
+│  ├─ GameLogStats.java    extracts stats from JSON logs
+│  ├─ StatsDatabase.java   JDBC/SQLite persistence and aggregate queries
+│  └─ StatsCli.java        stats-import / stats entry point
+├─ config/game_settings.json  GUI/server defaults + rule options
+├─ logs/                 JSON game logs (created at runtime, git-ignored)
+├─ data/                 SQLite DB (created at runtime, git-ignored)
 ├─ test/halligalli/test/  self-tests (Week 13)
 ├─ build.sh / run.sh / net_demo.sh
 └─ README.md
@@ -95,7 +112,7 @@ The engine only provides the **validation API**; who rings first is decided by t
 | Condition | Outcome | Handling |
 |---|---|---|
 | fruit 5 | FRUIT | move all face-up cards to the winner's draw pile bottom; clear face-up piles |
-| 3+ chip symbols | CHIP | grant 1 chip from the house pool (0 if depleted); reset the face-up cards |
+| chip-symbol target met | CHIP | grant 1 chip from the house pool (0 if depleted); reset the face-up cards |
 | both | BOTH | cards + chip |
 | neither | INVALID | false bell: ringer pays 1 card to each other active player |
 
@@ -117,6 +134,14 @@ The engine only provides the **validation API**; who rings first is decided by t
 - **SimulationRunner**: bots compete with random reactions in a full console playthrough (engine verification). Seeded for reproducibility.
 - **test/**: verifies DeckFactory (56 cards / 16 chips), Table aggregation, each RingOutcome, and life/elimination scenarios with plain-Java assertions. JUnit can be introduced in Week 13; the structure is already separated for it.
 - Build: dependency-free `javac` (`build.sh` / `run.sh`). Maven/Gradle optional.
+- **JSON settings**: `config/game_settings.json` controls the default port, player name, bot count,
+  bot difficulty, seed, log directory, and rule values (`fruitBellThreshold`,
+  `chipBellThreshold`, `reviveCardsPerPlayer`).
+- **JSON logs / replay**: the socket server writes `EVENT`, `STATE`, `TURN`, and `GAMEOVER`
+  entries to `logs/game-*.json`; `./run.sh replay <log.json>` prints a terminal replay.
+- **SQLite/JDBC stats DB**: `./run.sh stats-import <log.json>` parses JSON logs into
+  `data/halligalli_stats.db` tables (`games`, `players`, `player_game_stats`). `./run.sh stats`
+  prints player win rates, average turns, successful/false bells, and bot difficulty win rates.
 
 ---
 
@@ -126,7 +151,7 @@ The engine only provides the **validation API**; who rings first is decided by t
 |---|---|---|
 | 10–11 | Basic OOP | model + core + runner (bot sim) + self-tests ← **done** |
 | 12 | Socket Programming | `halligalli.net` authoritative server + console/bot clients ← **done** |
-| 13 | Exceptions & Testing | strengthen exceptions + introduce JUnit |
+| 13 | Exceptions & Testing + JSON/DB | strengthen exceptions, JSON settings/logs/replay, SQLite/JDBC stats DB ← **done**, introduce JUnit |
 | 14 | Simulations & Slides | sim statistics/demo, presentation slides |
 
 ---
@@ -157,7 +182,27 @@ The engine only provides the **validation API**; who rings first is decided by t
 | `StateView` | parse `STATE` line + render the board (shared by console/bot/GUI) |
 | `GameClient` | human console client (reader thread + stdin input) |
 | `SwingClient` | human Swing GUI client (graphical board + FLIP/BELL buttons, dependency-free custom painting) |
+| `GameLauncher` | Swing launcher for choosing host/join, bot count, and bot difficulty |
 | `BotClient` | auto-playing bot (random reactions create the bell race; for verification/demo) |
+| `GameSettings` | parses `config/game_settings.json` and provides runtime defaults |
+| `GameLogRecorder` | writes game events/states as JSON logs |
+| `GameReplay` | prints a terminal replay from a saved JSON log |
+
+### SQLite/JDBC stats DB (`halligalli.stats`)
+
+| Class | Role |
+|---|---|
+| `GameLogStats` | parses JSON logs and counts per-player FLIPs, successful bells, false bells, final cards/chips, and winner |
+| `StatsDatabase` | connects to SQLite through JDBC, creates tables, imports logs, and runs aggregate standings queries |
+| `StatsCli` | handles `./run.sh stats-import`, `./run.sh stats`, and `./run.sh stats games` |
+
+Schema:
+
+| Table | Contents |
+|---|---|
+| `players` | player name and bot flag |
+| `games` | log file, start/end time, seed, player count, bot difficulty, total turns, winner |
+| `player_game_stats` | per-game win/loss, FLIP count, successful/false bells, final cards/chips |
 
 > All terminal/GUI output is in English. The `STATE` message includes each player's visible card
 > (`p=name,cards,chips,status,FRUIT:count:chip`) so the GUI can draw the actual cards.

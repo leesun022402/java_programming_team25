@@ -32,7 +32,7 @@ public final class DeckFactory {
     /** Builds one shuffled deck (56 cards). */
     public static List<Card> newShuffledDeck(Random random) {
         List<Card> deck = newOrderedDeck();
-        Collections.shuffle(deck, random);
+        Collections.shuffle(deck, random != null ? random : new Random());
         return deck;
     }
 

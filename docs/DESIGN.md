@@ -11,10 +11,11 @@ Team 25 · 2026 Spring JAVA Programming Lab
 
 1. **카드** 56장, 그중 16장에 칩 심볼이 그려져 있음. **하우스**는 플레이어 수만큼 **물리 칩(목숨 토큰)** 을 가지고 시작.
 2. **종 치기**
-   - 보이는 카드들의 **같은 과일 합계가 5** 이거나, **칩 심볼이 3개 이상** 모이면 종을 칠 수 있다.
+   - 보이는 카드들의 **같은 과일 합계가 5** 이거나, **칩 심볼 목표치**를 채우면 종을 칠 수 있다.
+   - 칩 심볼 목표치는 기본 3개이며, 활성 플레이어가 2명뿐이면 2개로 낮아진다.
    - 가장 먼저 종을 친 사람이 보상을 가진다.
    - 과일 5 충족: 테이블의 모든 공개 카드를 가져감.
-   - 칩 심볼 3 충족: **칩 1개**를 가짐 + 공개 카드 초기화(공개 카드는 카드 보상으로 가져가지 않음).
+   - 칩 심볼 목표치 충족: **칩 1개**를 가짐 + 공개 카드 초기화(공개 카드는 카드 보상으로 가져가지 않음).
    - 둘 다 충족: 칩, 카드 **모두** 가짐.
 3. **칩 = 목숨.** 카드가 0장이 되어도 즉시 패배가 아니라, 칩 1개를 소비하고 다른 플레이어들에게서 **각 3장씩**(부족하면 가진 만큼) 받아 부활. 칩이 없으면 탈락.
 4. 하우스 칩이 모두 분배되면 더 이상 추가되지 않음(**전체 칩 = 플레이어 수**로 제한). 칩은 **사용 시 하우스로 돌아오지 않음**(재사용 불가).
@@ -37,17 +38,28 @@ java_programming/
 │  │   └─ Player.java       faceDown/faceUp 더미, chips, eliminated
 │  ├─ core/       게임 규칙 엔진
 │  │   ├─ DeckFactory.java  56장 생성 + 16장 칩 마킹 + 셔플
+│  │   ├─ GameRules.java    JSON 설정에서 바꿀 수 있는 룰 값
 │  │   ├─ Table.java        보이는 카드 집계(과일 합계, 칩 심볼 수)
 │  │   ├─ RingOutcome.java  enum: FRUIT, CHIP, BOTH, INVALID
 │  │   ├─ BellResult.java   판정 결과 + 획득 내역
 │  │   └─ GameManager.java  턴 진행, 칩 풀, ringBell 판정, 목숨/탈락
 │  ├─ exception/  커스텀 예외 (Week 13 대비)
 │  │   ├─ HalliGalliException.java
+│  │   ├─ InvalidGameSetupException.java
+│  │   ├─ InvalidPlayerException.java
 │  │   ├─ InvalidBellException.java
+│  │   ├─ NoChipException.java
 │  │   └─ GameOverException.java
 │  └─ runner/     구동 계층 (엔진과 분리)
 │      └─ SimulationRunner.java  봇 기반 데모(전체 라운드 시연)
 │      (이후: SocketServer / SocketClient 가 동일 GameManager 사용)
+├─ src/halligalli/stats/
+│  ├─ GameLogStats.java    JSON 로그에서 전적 통계 추출
+│  ├─ StatsDatabase.java   JDBC/SQLite 저장 및 집계 쿼리
+│  └─ StatsCli.java        stats-import / stats 실행 진입점
+├─ config/game_settings.json  GUI/서버 기본값 + 룰 옵션
+├─ logs/                 JSON 게임 로그(실행 시 생성, git 제외)
+├─ data/                 SQLite DB(실행 시 생성, git 제외)
 ├─ test/halligalli/test/  자체 테스트 (Week 13)
 ├─ build.sh / run.sh
 └─ README.md
@@ -82,7 +94,7 @@ java_programming/
 | 조건 | Outcome | 처리 |
 |---|---|---|
 | 과일 5 | FRUIT | 모든 공개 카드를 승자 faceDown 바닥으로, 공개 더미 비움 |
-| 칩 심볼 3개 이상 | CHIP | 하우스 풀에서 칩 1개 → 승자(풀 소진 시 0), 공개 카드 초기화 |
+| 칩 심볼 목표치 충족 | CHIP | 하우스 풀에서 칩 1개 → 승자(풀 소진 시 0), 공개 카드 초기화 |
 | 둘 다 | BOTH | 카드 + 칩 모두 |
 | 미충족 | INVALID | 오발: 승자가 다른 활성 플레이어 각각에게 카드 1장 벌칙 |
 
@@ -103,6 +115,13 @@ java_programming/
 - **SimulationRunner**: 봇들이 무작위 반응으로 종을 치는 전체 게임을 콘솔 시연(엔진 검증). 시드 고정으로 재현 가능.
 - **test/**: DeckFactory(56장·16칩), Table 집계, 각 RingOutcome, 목숨/탈락 시나리오를 plain-Java 어서션으로 검증. JUnit은 Week 13에 추가 가능하도록 구조만 분리.
 - 빌드: 의존성 없는 `javac` (`build.sh` / `run.sh`). Maven/Gradle 선택.
+- **JSON 설정**: `config/game_settings.json`에서 기본 포트, 기본 이름, 봇 난이도/수, seed,
+  로그 저장 여부, 룰 옵션(`fruitBellThreshold`, `chipBellThreshold`, `reviveCardsPerPlayer`)을 읽는다.
+- **JSON 게임 로그/리플레이**: 소켓 서버가 `EVENT`, `STATE`, `TURN`, `GAMEOVER` 등을 `logs/game-*.json`에 저장하고,
+  `./run.sh replay <log.json>`으로 터미널에서 순서대로 다시 확인한다.
+- **SQLite/JDBC 전적 DB**: `./run.sh stats-import <log.json>`이 JSON 로그를 파싱해
+  `data/halligalli_stats.db`에 `games`, `players`, `player_game_stats` 테이블로 저장한다.
+  `./run.sh stats`는 플레이어별 승률, 평균 턴 수, 벨 성공/오발 횟수와 봇 난이도별 승률을 출력한다.
 
 ---
 
@@ -112,7 +131,7 @@ java_programming/
 |---|---|---|
 | 10–11 | Basic OOP | model + core + runner(봇 시뮬) + 자체 테스트 ← **완료** |
 | 12 | Socket Programming | `halligalli.net` 권위 서버 + 콘솔/봇 클라이언트 ← **완료** |
-| 13 | Exceptions & Testing | exception 강화 + JUnit 도입 |
+| 13 | Exceptions & Testing + JSON/DB | exception 강화, JSON 설정/로그/리플레이, SQLite/JDBC 전적 DB ← **완료**, JUnit 도입 |
 | 14 | Simulations & Slides | 시뮬 통계/시연, 발표자료 |
 
 ---
@@ -143,7 +162,27 @@ java_programming/
 | `StateView` | `STATE` 줄 파싱 + 보드 렌더링(콘솔/봇/GUI 공유) |
 | `GameClient` | 사람용 콘솔 클라이언트(수신 스레드 + stdin 입력) |
 | `SwingClient` | 사람용 Swing GUI 클라이언트(그래픽 보드 + FLIP/BELL 버튼, 무의존 커스텀 페인팅) |
+| `GameLauncher` | 서버/참가/봇 수/봇 난이도를 선택하는 Swing 런처 |
 | `BotClient` | 자동 플레이 봇(무작위 반응으로 종 경쟁 생성, 검증/시연용) |
+| `GameSettings` | `config/game_settings.json` 파싱 및 기본값 제공 |
+| `GameLogRecorder` | 게임 이벤트/상태를 JSON 로그로 저장 |
+| `GameReplay` | 저장된 JSON 로그를 터미널 리플레이로 출력 |
+
+### SQLite/JDBC 전적 DB (`halligalli.stats`)
+
+| 클래스 | 역할 |
+|---|---|
+| `GameLogStats` | JSON 로그를 읽어 플레이어별 FLIP 수, 벨 성공, 오발, 최종 카드/칩, 승자를 집계 |
+| `StatsDatabase` | JDBC로 SQLite DB 연결, 테이블 생성, import, 전적/난이도별 승률 쿼리 수행 |
+| `StatsCli` | `./run.sh stats-import`, `./run.sh stats`, `./run.sh stats games` 명령 처리 |
+
+DB 스키마:
+
+| 테이블 | 내용 |
+|---|---|
+| `players` | 플레이어 이름, 봇 여부 |
+| `games` | 로그 파일, 시작/종료 시각, seed, 플레이어 수, 봇 난이도, 총 턴 수, 승자 |
+| `player_game_stats` | 게임별 플레이어 승패, FLIP 수, 벨 성공/오발 횟수, 최종 카드/칩 |
 
 > 모든 터미널/GUI 출력은 영어. `STATE` 메시지에 각 플레이어의 보이는 카드(`p=name,cards,chips,status,FRUIT:count:chip`)를 포함해 GUI가 실제 카드를 그릴 수 있다.
 

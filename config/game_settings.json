@@ -1,0 +1,16 @@
+{
+  "defaultPort": 5555,
+  "defaultPlayerName": "Player",
+  "totalPlayers": 2,
+  "botPlayers": 1,
+  "botDifficulty": "easy",
+  "seed": 25,
+  "enableJsonLogs": true,
+  "logDirectory": "logs",
+  "databasePath": "data/halligalli_stats.db",
+  "rules": {
+    "fruitBellThreshold": 5,
+    "chipBellThreshold": 3,
+    "reviveCardsPerPlayer": 3
+  }
+}

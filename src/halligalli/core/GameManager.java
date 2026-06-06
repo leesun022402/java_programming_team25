@@ -1,15 +1,21 @@
 package halligalli.core;
 
 import halligalli.exception.GameOverException;
+import halligalli.exception.InvalidGameSetupException;
 import halligalli.exception.InvalidBellException;
+import halligalli.exception.InvalidPlayerException;
 import halligalli.model.Card;
 import halligalli.model.Player;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Orchestrates the game (the GAME MANAGER from the slides).
@@ -23,34 +29,64 @@ import java.util.Random;
 public class GameManager {
 
     /** Cards received from each other player when reviving. */
-    public static final int REVIVE_CARDS_PER_PLAYER = 3;
+    public static final int REVIVE_CARDS_PER_PLAYER = GameRules.DEFAULT_REVIVE_CARDS_PER_PLAYER;
 
     private final List<Player> players;
     private final Table table;
+    private final GameRules rules;
     private int houseChips;
     private int turnIndex = 0;
     private boolean gameOver = false;
 
     /** Standard constructor: shuffles and deals the 56-card deck. */
     public GameManager(List<Player> players, Random random) {
-        this(players, random, true);
+        this(players, random, GameRules.defaults());
+    }
+
+    /** Standard constructor with custom rule values. */
+    public GameManager(List<Player> players, Random random, GameRules rules) {
+        this(players, random, true, rules);
     }
 
     /** No-deal constructor (for tests / custom setups). The caller fills the piles. */
     public GameManager(List<Player> players) {
-        this(players, null, false);
+        this(players, GameRules.defaults());
     }
 
-    private GameManager(List<Player> players, Random random, boolean deal) {
-        if (players == null || players.size() < 3) {
-            throw new IllegalArgumentException("At least 3 players are required.");
-        }
-        this.players = new ArrayList<>(players);
-        this.table = new Table(this.players);
-        this.houseChips = players.size(); // the house starts with one chip per player
+    /** No-deal constructor with custom rule values. */
+    public GameManager(List<Player> players, GameRules rules) {
+        this(players, null, false, rules);
+    }
+
+    private GameManager(List<Player> players, Random random, boolean deal, GameRules rules) {
+        this.players = validatePlayers(players);
+        this.rules = rules != null ? rules : GameRules.defaults();
+        this.table = new Table(this.players, this.rules);
+        this.houseChips = this.players.size(); // the house starts with one chip per player
         if (deal) {
             dealDeck(random);
         }
+    }
+
+    private List<Player> validatePlayers(List<Player> players) {
+        if (players == null || players.size() < 2) {
+            throw new InvalidGameSetupException("At least 2 players are required.");
+        }
+        Set<Player> seenPlayers = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> seenNames = new HashSet<>();
+        for (Player p : players) {
+            if (p == null) {
+                throw new InvalidGameSetupException("Player list cannot contain null.");
+            }
+            if (!seenPlayers.add(p)) {
+                throw new InvalidGameSetupException("The same Player instance cannot be seated twice: "
+                        + p.name());
+            }
+            if (!seenNames.add(p.name())) {
+                throw new InvalidGameSetupException("Duplicate player name: " + p.name());
+            }
+        }
+        return new ArrayList<>(players);
     }
 
     /** Shuffles the 56 cards and deals them as evenly as possible. */
@@ -68,11 +104,15 @@ public class GameManager {
     }
 
     public List<Player> players() {
-        return players;
+        return Collections.unmodifiableList(players);
     }
 
     public int houseChips() {
         return houseChips;
+    }
+
+    public GameRules rules() {
+        return rules;
     }
 
     public boolean isGameOver() {
@@ -111,8 +151,7 @@ public class GameManager {
 
         if (current.hasNoCards()) {
             ensurePlayableOrEliminate(current);
-            checkGameOver();
-            if (gameOver) {
+            if (gameOver || !current.isActive()) {
                 return null;
             }
         }
@@ -140,6 +179,15 @@ public class GameManager {
      * active player. If still at 0 afterwards, or no chip to begin with, eliminates.
      */
     public void ensurePlayableOrEliminate(Player player) {
+        requireParticipant(player);
+        if (player.isEliminated() || !player.hasNoCards()) {
+            return;
+        }
+        ensurePlayableOrEliminateOnce(player);
+        resolveZeroCardPlayers();
+    }
+
+    private void ensurePlayableOrEliminateOnce(Player player) {
         if (!player.hasNoCards()) {
             return;
         }
@@ -152,7 +200,7 @@ public class GameManager {
             if (other == player || other.isEliminated()) {
                 continue;
             }
-            int take = Math.min(REVIVE_CARDS_PER_PLAYER, other.totalCards());
+            int take = Math.min(rules.reviveCardsPerPlayer(), other.totalCards());
             for (int i = 0; i < take; i++) {
                 Card card = removeOneTransferCard(other);
                 if (card != null) {
@@ -170,15 +218,17 @@ public class GameManager {
      * If that player was the current one, advances the turn, then checks for game end.
      */
     public void forceEliminate(Player player) {
-        if (player == null || player.isEliminated()) {
+        requireParticipant(player);
+        if (player.isEliminated()) {
             return;
         }
         boolean wasCurrent = currentPlayer() == player;
+        player.takeFaceUp();
         player.eliminate();
-        if (wasCurrent) {
+        checkGameOver();
+        if (wasCurrent && !gameOver) {
             advanceTurn();
         }
-        checkGameOver();
     }
 
     /** Ends the game once one or fewer players remain active. */
@@ -208,7 +258,8 @@ public class GameManager {
         if (gameOver) {
             throw new GameOverException("The game is already over.");
         }
-        if (ringer == null || ringer.isEliminated()) {
+        requireParticipant(ringer);
+        if (ringer.isEliminated()) {
             throw new InvalidBellException("An eliminated or unknown player cannot ring the bell.");
         }
 
@@ -263,16 +314,18 @@ public class GameManager {
         int cards = collectAllFaceUp(ringer);
         afterBellMaintenance();
         return new BellResult(ringer, outcome, cards, false,
-                String.format("%s rings! Fruit 5 -> won %d cards", ringer.name(), cards));
+                String.format("%s rings! Fruit %d -> won %d cards",
+                        ringer.name(), rules.fruitBellThreshold(), cards));
     }
 
-    /** 3 chip symbols: 1 chip from the house, then reset the table cards. */
+    /** Enough chip symbols: 1 chip from the house, then reset the table cards. */
     private BellResult resolveChip(Player ringer, RingOutcome outcome) {
         boolean got = grantChip(ringer);
         int cleared = clearAllFaceUp();
         afterBellMaintenance();
         return new BellResult(ringer, outcome, 0, got,
-                String.format("%s rings! 3 chips -> %s, cleared %d card(s)", ringer.name(),
+                String.format("%s rings! %d chips -> %s, cleared %d card(s)", ringer.name(),
+                        table.chipBellThreshold(),
                         got ? "won 1 chip" : "house chips depleted (none won)", cleared));
     }
 
@@ -282,8 +335,9 @@ public class GameManager {
         boolean got = grantChip(ringer);
         afterBellMaintenance();
         return new BellResult(ringer, RingOutcome.BOTH, cards, got,
-                String.format("%s rings! Fruit 5 + 3 chips -> won %d cards%s", ringer.name(), cards,
-                        got ? " + 1 chip" : " (house chips depleted)"));
+                String.format("%s rings! Fruit %d + %d chips -> won %d cards%s",
+                        ringer.name(), rules.fruitBellThreshold(), table.chipBellThreshold(),
+                        cards, got ? " + 1 chip" : " (house chips depleted)"));
     }
 
     /** False bell: pay 1 card to each other active player. */
@@ -345,14 +399,42 @@ public class GameManager {
 
     /** After a bell, run life/elimination checks for any player at 0 cards. */
     private void afterBellMaintenance() {
-        for (Player p : players) {
-            if (p.isActive() && p.hasNoCards()) {
-                ensurePlayableOrEliminate(p);
+        resolveZeroCardPlayers();
+    }
+
+    private void resolveZeroCardPlayers() {
+        boolean changed;
+        do {
+            changed = false;
+            for (Player p : players) {
+                if (p.isActive() && p.hasNoCards()) {
+                    ensurePlayableOrEliminateOnce(p);
+                    changed = true;
+                }
             }
-        }
-        checkGameOver();
+            checkGameOver();
+        } while (!gameOver && changed && hasActivePlayerWithNoCards());
+
         if (!gameOver && currentPlayer().isEliminated()) {
             advanceTurn();
+        }
+    }
+
+    private boolean hasActivePlayerWithNoCards() {
+        for (Player p : players) {
+            if (p.isActive() && p.hasNoCards()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void requireParticipant(Player player) {
+        if (player == null) {
+            throw new InvalidPlayerException("Player must not be null.");
+        }
+        if (!players.contains(player)) {
+            throw new InvalidPlayerException(player.name() + " is not seated in this game.");
         }
     }
 

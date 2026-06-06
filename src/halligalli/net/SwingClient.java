@@ -23,8 +23,9 @@ public class SwingClient extends JFrame {
 
     private volatile StateView state;
     private volatile boolean gameActive = false;
+    private volatile boolean gameEnded = false;
 
-    private final JPanel playersPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 10));
+    private final JPanel playersPanel = new PlayersPanel();
     private final TablePanel tablePanel = new TablePanel();
     private final JLabel statusLabel = new JLabel("Connecting...", SwingConstants.CENTER);
     private final JButton flipButton = new JButton("FLIP (my turn)");
@@ -39,6 +40,7 @@ public class SwingClient extends JFrame {
 
     private void buildUi() {
         setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setResizable(true);
         setLayout(new BorderLayout(8, 8));
 
         statusLabel.setFont(statusLabel.getFont().deriveFont(Font.BOLD, 16f));
@@ -46,7 +48,12 @@ public class SwingClient extends JFrame {
         add(statusLabel, BorderLayout.NORTH);
 
         playersPanel.setBackground(new Color(0xF2, 0xEC, 0xE3));
-        add(playersPanel, BorderLayout.CENTER);
+        JScrollPane playersScroll = new JScrollPane(playersPanel);
+        playersScroll.setBorder(BorderFactory.createEmptyBorder());
+        playersScroll.getViewport().setBackground(playersPanel.getBackground());
+        playersScroll.getVerticalScrollBar().setUnitIncrement(16);
+        playersScroll.getHorizontalScrollBar().setUnitIncrement(16);
+        add(playersScroll, BorderLayout.CENTER);
         add(tablePanel, BorderLayout.EAST);
 
         // bottom: buttons + log
@@ -70,6 +77,7 @@ public class SwingClient extends JFrame {
         add(south, BorderLayout.SOUTH);
 
         setSize(820, 620);
+        setMinimumSize(new Dimension(520, 420));
         setLocationByPlatform(true);
     }
 
@@ -92,7 +100,9 @@ public class SwingClient extends JFrame {
                 }
             } catch (Exception ignored) {
             }
-            SwingUtilities.invokeLater(() -> statusLabel.setText("Disconnected"));
+            if (!gameEnded) {
+                SwingUtilities.invokeLater(() -> statusLabel.setText("Disconnected"));
+            }
         });
         reader.setDaemon(true);
         reader.start();
@@ -112,6 +122,7 @@ public class SwingClient extends JFrame {
         } else if (line.startsWith(Protocol.MSG_GAMEOVER)) {
             String winner = line.substring(Protocol.MSG_GAMEOVER.length()).trim();
             gameActive = false;
+            gameEnded = true;
             SwingUtilities.invokeLater(() -> onGameOver(winner));
         } else if (line.startsWith(Protocol.MSG_WELCOME)) {
             String assignedName = stripType(line).trim();
@@ -137,8 +148,9 @@ public class SwingClient extends JFrame {
         this.state = v;
         boolean myTurn = myName.equals(v.turn);
 
-        statusLabel.setText(String.format("Turn: %s%s    House chips: %d    Chip symbols: %d/3",
-                v.turn, v.bellable ? "    *** BELL AVAILABLE ***" : "", v.house, v.chipSymbols));
+        statusLabel.setText(String.format("Turn: %s%s    House chips: %d    Chip symbols: %d/%d",
+                v.turn, v.bellable ? "    *** BELL AVAILABLE ***" : "",
+                v.house, v.chipSymbols, v.chipTarget));
         statusLabel.setForeground(v.bellable ? new Color(0xC0, 0x39, 0x2B) : Color.DARK_GRAY);
 
         playersPanel.removeAll();
@@ -181,6 +193,73 @@ public class SwingClient extends JFrame {
             case "LIME": return new Color(0x2E, 0xCC, 0x71);
             case "PLUM": return new Color(0x8E, 0x44, 0xAD);
             default: return Color.GRAY;
+        }
+    }
+
+    /** Flow panel that wraps cards to the current viewport width when the window is resized. */
+    static final class PlayersPanel extends JPanel implements Scrollable {
+        PlayersPanel() {
+            super(new FlowLayout(FlowLayout.CENTER, 14, 10));
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension base = super.getPreferredSize();
+            Container parent = getParent();
+            int width = parent != null ? parent.getWidth() : 0;
+            if (width <= 0 || getComponentCount() == 0) {
+                return base;
+            }
+
+            FlowLayout layout = (FlowLayout) getLayout();
+            Insets insets = getInsets();
+            int maxWidth = Math.max(1, width - insets.left - insets.right - layout.getHgap() * 2);
+            int rowWidth = 0;
+            int rowHeight = 0;
+            int totalHeight = insets.top + insets.bottom + layout.getVgap() * 2;
+
+            for (Component component : getComponents()) {
+                if (!component.isVisible()) {
+                    continue;
+                }
+                Dimension d = component.getPreferredSize();
+                int nextWidth = rowWidth == 0 ? d.width : rowWidth + layout.getHgap() + d.width;
+                if (nextWidth <= maxWidth) {
+                    rowWidth = nextWidth;
+                    rowHeight = Math.max(rowHeight, d.height);
+                } else {
+                    totalHeight += rowHeight + layout.getVgap();
+                    rowWidth = d.width;
+                    rowHeight = d.height;
+                }
+            }
+            totalHeight += rowHeight;
+            return new Dimension(width, Math.max(base.height, totalHeight));
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 24;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 120;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
         }
     }
 
@@ -302,12 +381,12 @@ public class SwingClient extends JFrame {
                     g2.fillRoundRect(16, y - 12, 16, 16, 4, 4);
                     g2.setColor(Color.DARK_GRAY);
                     g2.drawString(StateView.prettyFruit(e.key) + ": " + e.val
-                            + (e.val == 5 ? "  (5!)" : ""), 40, y);
+                            + (e.val == state.fruitTarget ? "  (" + state.fruitTarget + "!)" : ""), 40, y);
                     y += 26;
                 }
                 y += 10;
                 g2.setColor(Color.DARK_GRAY);
-                g2.drawString("Chip symbols: " + state.chipSymbols + "/3", 16, y);
+                g2.drawString("Chip symbols: " + state.chipSymbols + "/" + state.chipTarget, 16, y);
                 y += 26;
                 g2.drawString("House chips: " + state.house, 16, y);
                 y += 40;
@@ -338,6 +417,11 @@ public class SwingClient extends JFrame {
     // --------------------------------------------------------------------- main
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 0) {
+            GameLauncher.main(args);
+            return;
+        }
+
         String host = args.length > 0 ? args[0] : "localhost";
         int port = args.length > 1 ? Integer.parseInt(args[1]) : Protocol.DEFAULT_PORT;
         String name = args.length > 2 ? args[2] : "Player";

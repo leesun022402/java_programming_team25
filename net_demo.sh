@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 # 소켓 멀티플레이 데모: 서버 1 + 봇 3을 띄워 한 게임을 자동 진행한다.
-#   ./net_demo.sh [port] [players] [seed]
+#   ./net_demo.sh [port] [players] [seed] [bot-level]
 set -uo pipefail
 cd "$(dirname "$0")"
 
 PORT="${1:-5557}"
 PLAYERS="${2:-3}"
 SEED="${3:-25}"
+LEVEL="${4:-fast}"
 
 [ -d build ] || ./build.sh
 
-echo "=== 소켓 데모: 서버 + 봇 ${PLAYERS} (port=${PORT}) ==="
-java -cp build halligalli.net.GameServer "$PORT" "$PLAYERS" "$SEED" &
+echo "=== 소켓 데모: 서버 + 봇 ${PLAYERS} (port=${PORT}, level=${LEVEL}) ==="
+java -cp build halligalli.net.GameServer "$PORT" "$PLAYERS" "$SEED" "$LEVEL" &
 SERVER_PID=$!
 sleep 1
 
 BOT_PIDS=()
 for i in $(seq 1 "$PLAYERS"); do
-  java -cp build halligalli.net.BotClient localhost "$PORT" "BOT$i" "$((SEED + i))" fast &
+  java -cp build halligalli.net.BotClient localhost "$PORT" "BOT$i" "$((SEED + i))" "$LEVEL" &
   BOT_PIDS+=($!)
   sleep 0.2
 done

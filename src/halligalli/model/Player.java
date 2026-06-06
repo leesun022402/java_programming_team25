@@ -1,5 +1,7 @@
 package halligalli.model;
 
+import halligalli.exception.NoChipException;
+
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
@@ -86,7 +88,7 @@ public class Player {
     /** Spends one chip as a life. */
     public void consumeChip() {
         if (chips <= 0) {
-            throw new IllegalStateException(name + ": no chips to spend.");
+            throw new NoChipException(name + ": no chips to spend.");
         }
         chips--;
     }

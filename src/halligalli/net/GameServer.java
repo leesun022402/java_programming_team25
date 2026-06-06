@@ -2,7 +2,9 @@ package halligalli.net;
 
 import halligalli.core.BellResult;
 import halligalli.core.GameManager;
+import halligalli.core.GameRules;
 import halligalli.exception.HalliGalliException;
+import halligalli.exception.InvalidGameSetupException;
 import halligalli.model.Card;
 import halligalli.model.Fruit;
 import halligalli.model.Player;
@@ -33,6 +35,8 @@ public class GameServer {
     private final int expectedPlayers;
     private final Random random;
     private final boolean verbose;
+    private final GameLogRecorder logRecorder;
+    private final GameRules rules;
 
     private final Object lock = new Object();
     private final List<ClientHandler> handlers = new CopyOnWriteArrayList<>();
@@ -50,14 +54,36 @@ public class GameServer {
 
     /** When {@code verbose} is true, the server also echoes game events to its own console. */
     public GameServer(int port, int expectedPlayers, Random random, boolean verbose) {
+        this(port, expectedPlayers, random, verbose, null);
+    }
+
+    public GameServer(int port, int expectedPlayers, Random random,
+                      boolean verbose, GameLogRecorder logRecorder) {
+        this(port, expectedPlayers, random, verbose, logRecorder, GameRules.defaults());
+    }
+
+    public GameServer(int port, int expectedPlayers, Random random,
+                      boolean verbose, GameLogRecorder logRecorder, GameRules rules) {
+        if (expectedPlayers < 2) {
+            throw new InvalidGameSetupException("At least 2 players are required.");
+        }
         this.port = port;
         this.expectedPlayers = expectedPlayers;
-        this.random = random;
+        this.random = random != null ? random : new Random();
         this.verbose = verbose;
+        this.logRecorder = logRecorder;
+        this.rules = rules != null ? rules : GameRules.defaults();
     }
 
     /** Starts the server and blocks until the game ends. */
     public void start() throws IOException, InterruptedException {
+        Thread logShutdownHook = null;
+        if (logRecorder != null) {
+            logShutdownHook = new Thread(() -> closeLog("shutdown", currentWinnerName()),
+                    "hgp-log-shutdown");
+            Runtime.getRuntime().addShutdownHook(logShutdownHook);
+            System.out.println("[server] JSON log: " + logRecorder.path());
+        }
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setSoTimeout(500);
             System.out.println("[server] waiting for " + expectedPlayers + " players on port " + port + "...");
@@ -75,6 +101,15 @@ public class GameServer {
             }
             gameOverLatch.await(); // wait until the game is over
             System.out.println("[server] game over. shutting down.");
+        } finally {
+            if (logShutdownHook != null) {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(logShutdownHook);
+                } catch (IllegalStateException ignored) {
+                    // JVM is already shutting down, so the hook is running or has run.
+                }
+            }
+            closeLog(finished ? "finished" : "stopped", currentWinnerName());
         }
     }
 
@@ -101,6 +136,7 @@ public class GameServer {
         String arg = parts.length > 1 ? parts[1] : "";
 
         synchronized (lock) {
+            recordCommand(handler, cmd, arg);
             switch (cmd) {
                 case Protocol.CMD_JOIN:
                     handleJoin(handler, arg);
@@ -141,6 +177,7 @@ public class GameServer {
         joinOrder.add(player);
         handler.send(Protocol.MSG_WELCOME + " " + name);
         broadcast(Protocol.MSG_INFO + " " + name + " joined (" + joinOrder.size() + "/" + expectedPlayers + ")");
+        record("JOIN", name + " joined (" + joinOrder.size() + "/" + expectedPlayers + ")", null);
 
         if (joinOrder.size() == expectedPlayers && !started) {
             startGame();
@@ -174,9 +211,10 @@ public class GameServer {
     }
 
     private void startGame() {
-        game = new GameManager(joinOrder, random);
+        game = new GameManager(joinOrder, random, rules);
         started = true;
         broadcast(Protocol.MSG_START + " Game start! FLIP on your turn, BELL anytime.");
+        record("START", "Game start! FLIP on your turn, BELL anytime.", buildState());
         broadcastEvent("Starting with " + game.houseChips() + " house chips");
         broadcastState();
         announceTurn();
@@ -190,6 +228,7 @@ public class GameServer {
         if (game.currentPlayer() != p) {
             handler.send(Protocol.MSG_ERROR + " Not your turn. (current: "
                     + game.currentPlayer().name() + ")");
+            record("ERROR", p.name() + " tried FLIP out of turn", buildState());
             return;
         }
         Player who = game.currentPlayer();
@@ -208,6 +247,7 @@ public class GameServer {
             broadcastEvent(result.description());
         } catch (HalliGalliException e) {
             handler.send(Protocol.MSG_ERROR + " " + e.getMessage());
+            record("ERROR", p.name() + " BELL failed: " + e.getMessage(), buildState());
             return;
         }
         afterAction();
@@ -241,7 +281,9 @@ public class GameServer {
     }
 
     private void announceTurn() {
-        broadcast(Protocol.MSG_INFO + " > " + game.currentPlayer().name() + "'s turn (FLIP)");
+        String text = "> " + game.currentPlayer().name() + "'s turn (FLIP)";
+        broadcast(Protocol.MSG_INFO + " " + text);
+        record("TURN", text, buildState());
     }
 
     private void finishGame() {
@@ -252,6 +294,8 @@ public class GameServer {
         Player winner = game.winner();
         broadcastState();
         broadcast(Protocol.MSG_GAMEOVER + " " + (winner != null ? winner.name() : "none"));
+        record("GAMEOVER", "Winner: " + (winner != null ? winner.name() : "none"), buildState());
+        closeLog("finished", winner != null ? winner.name() : null);
         for (ClientHandler h : handlers) {
             h.close();
         }
@@ -271,6 +315,7 @@ public class GameServer {
                 joinOrder.remove(p);
                 broadcast(Protocol.MSG_INFO + " " + p.name() + " left before start ("
                         + joinOrder.size() + "/" + expectedPlayers + ")");
+                record("LEAVE", p.name() + " left before start", null);
                 return;
             }
             if (p.isActive()) {
@@ -299,10 +344,13 @@ public class GameServer {
 
     private void broadcastEvent(String text) {
         broadcast(Protocol.MSG_EVENT + " " + text);
+        record("EVENT", text, game != null ? buildState() : null);
     }
 
     private void broadcastState() {
-        broadcast(buildState());
+        String state = buildState();
+        broadcast(state);
+        record("STATE", null, state);
     }
 
     /** Builds the current game state as a parseable STATE string. */
@@ -312,6 +360,8 @@ public class GameServer {
         sb.append("|bellable=").append(game.table().isBellable());
         sb.append("|house=").append(game.houseChips());
         sb.append("|chipsym=").append(game.table().chipSymbolCount());
+        sb.append("|fruittarget=").append(game.rules().fruitBellThreshold());
+        sb.append("|chiptarget=").append(game.table().chipBellThreshold());
 
         sb.append("|fruits=");
         Map<Fruit, Integer> totals = game.table().fruitTotals();
@@ -342,12 +392,43 @@ public class GameServer {
         return card.fruit().name() + ":" + card.count() + ":" + (card.hasChip() ? "1" : "0");
     }
 
+    private void recordCommand(ClientHandler handler, String cmd, String arg) {
+        Player actor = playerOf.get(handler);
+        String name = actor != null ? actor.name() : "(not joined)";
+        String details = arg.isBlank() ? "" : " " + sanitizeName(arg);
+        record("COMMAND", name + " -> " + cmd + details,
+                started && game != null ? buildState() : null);
+    }
+
+    private void record(String type, String message, String state) {
+        if (logRecorder != null) {
+            logRecorder.record(type, message, state);
+        }
+    }
+
+    private String currentWinnerName() {
+        synchronized (lock) {
+            Player winner = game != null ? game.winner() : null;
+            return winner != null ? winner.name() : null;
+        }
+    }
+
+    private void closeLog(String status, String winner) {
+        if (logRecorder != null) {
+            logRecorder.finish(status, winner);
+        }
+    }
+
     // --------------------------------------------------------------------- main
 
     public static void main(String[] args) throws Exception {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : Protocol.DEFAULT_PORT;
-        int players = args.length > 1 ? Integer.parseInt(args[1]) : 3;
-        long seed = args.length > 2 ? Long.parseLong(args[2]) : 25L;
-        new GameServer(port, players, new Random(seed), true).start();
+        GameSettings settings = GameSettings.loadDefault();
+        int port = args.length > 0 ? Integer.parseInt(args[0]) : settings.defaultPort();
+        int players = args.length > 1 ? Integer.parseInt(args[1]) : settings.totalPlayers();
+        long seed = args.length > 2 ? Long.parseLong(args[2]) : settings.seed();
+        String botDifficulty = args.length > 3 ? args[3] : settings.botDifficulty();
+        GameLogRecorder recorder = GameLogRecorder.createIfEnabled(settings, port, players, seed,
+                botDifficulty);
+        new GameServer(port, players, new Random(seed), true, recorder, settings.toGameRules()).start();
     }
 }
